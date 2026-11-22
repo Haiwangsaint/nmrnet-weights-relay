@@ -6,21 +6,21 @@ jobs:
   relay:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: fetch and stage
         run: |
           set -e
           curl -sL --retry 3 -o w.zip "https://zenodo.org/api/records/13317524/files/weights.zip/content"
           ls -la w.zip
           mkdir full && cd full && unzip -q ../w.zip && cd ..
-          (cd full && find . -type f -printf '%s\t%p\n' | sort -k2) | tee listing.txt | head -60
-      - name: stage liquid picks
-        run: |
-          set -e
+          du -sh full
+          (cd full && find . -type f -printf '%s\t%p\n' | sort -k2) > listing.txt
+          head -80 listing.txt
           mkdir -p stage
           cd full
           find . -type f \( -name 'checkpoint_best.pt' -o -name 'target_scaler.ss' -o -name '*dict*.txt' \) | grep -iE 'nmrshift|sdb|liquid|mol' > ../picks.txt || true
           if [ ! -s ../picks.txt ]; then
-            find . -type f \( -name 'checkpoint_best.pt' -o -name 'target_scaler.ss' -o -name '*dict*.txt' \) > ../picks.txt || true
+            find . -type f \( -name '*.pt' -o -name 'target_scaler.ss' -o -name '*dict*.txt' \) > ../picks.txt || true
           fi
           cd ..
           echo '--- picks ---'; cat picks.txt
@@ -29,8 +29,20 @@ jobs:
             cp "full/$f" "$out"
           done < picks.txt
           ls -la stage
+      - name: commit diagnostics
+        run: |
+          git config user.email "relay@bot"
+          git config user.name "relay-bot"
+          git add listing.txt picks.txt
+          git commit -m "diagnostics" || true
+          git push || true
       - name: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create v1 --title "NMRNet weights relay" --notes "Source: https://zenodo.org/records/13317524 (code MIT / data CC-BY-4.0). Liquid nmrshiftdb2 fine-tuned checkpoints." listing.txt picks.txt stage/*
+          gh release create v1 --title "NMRNet weights relay" --notes "Source: https://zenodo.org/records/13317524 (code MIT / data CC-BY-4.0)" || true
+          for f in stage/*; do
+            [ -f "$f" ] || continue
+            echo "uploading $f ($(stat -c%s "$f") bytes)"
+            gh release upload v1 "$f" --clobber || echo "FAILED: $f"
+          done
