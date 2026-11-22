@@ -1,0 +1,36 @@
+name: relay-weights
+on: [push]
+permissions:
+  contents: write
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    steps:
+      - name: fetch and stage
+        run: |
+          set -e
+          curl -sL --retry 3 -o w.zip "https://zenodo.org/api/records/13317524/files/weights.zip/content"
+          ls -la w.zip
+          mkdir full && cd full && unzip -q ../w.zip && cd ..
+          (cd full && find . -type f -printf '%s\t%p\n' | sort -k2) | tee listing.txt | head -60
+      - name: stage liquid picks
+        run: |
+          set -e
+          mkdir -p stage
+          cd full
+          find . -type f \( -name 'checkpoint_best.pt' -o -name 'target_scaler.ss' -o -name '*dict*.txt' \) | grep -iE 'nmrshift|sdb|liquid|mol' > ../picks.txt || true
+          if [ ! -s ../picks.txt ]; then
+            find . -type f \( -name 'checkpoint_best.pt' -o -name 'target_scaler.ss' -o -name '*dict*.txt' \) > ../picks.txt || true
+          fi
+          cd ..
+          echo '--- picks ---'; cat picks.txt
+          while IFS= read -r f; do
+            out="stage/$(echo "$f" | sed 's|^\./||; s|/|__|g')"
+            cp "full/$f" "$out"
+          done < picks.txt
+          ls -la stage
+      - name: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create v1 --title "NMRNet weights relay" --notes "Source: https://zenodo.org/records/13317524 (code MIT / data CC-BY-4.0). Liquid nmrshiftdb2 fine-tuned checkpoints." listing.txt picks.txt stage/*
