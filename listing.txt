@@ -1,0 +1,6 @@
+572148457	./weights/pretraining_inorganic_crystal.pt
+291	./weights/pretraining_inorganic_crystal.txt
+190540187	./weights/pretraining_molecular.pt
+91	./weights/pretraining_molecular.txt
+571388705	./weights/pretraining_organic_crystal.pt
+91	./weights/pretraining_organic_crystal.txt

@@ -1,0 +1,3 @@
+./weights/pretraining_inorganic_crystal.pt
+./weights/pretraining_molecular.pt
+./weights/pretraining_organic_crystal.pt
