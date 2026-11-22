@@ -1,4 +1,4 @@
-name: relay-weights
+name: relay-weights-v2
 on: [push]
 permissions:
   contents: write
@@ -7,42 +7,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: fetch and stage
+      - name: fetch dict
         run: |
           set -e
-          curl -sL --retry 3 -o w.zip "https://zenodo.org/api/records/13317524/files/weights.zip/content"
-          ls -la w.zip
-          mkdir full && cd full && unzip -q ../w.zip && cd ..
-          du -sh full
-          (cd full && find . -type f -printf '%s\t%p\n' | sort -k2) > listing.txt
-          head -80 listing.txt
+          curl -sL --retry 3 -o weight.zip "https://zenodo.org/api/records/18232165/files/weight.zip/content"
+          mkdir -p w && cd w && unzip -o -q ../weight.zip && cd ..
+          find w -type f -printf '%s\t%p\n'
           mkdir -p stage
-          cd full
-          find . -type f \( -name 'checkpoint_best.pt' -o -name 'target_scaler.ss' -o -name '*dict*.txt' \) | grep -iE 'nmrshift|sdb|liquid|mol' > ../picks.txt || true
-          if [ ! -s ../picks.txt ]; then
-            find . -type f \( -name '*.pt' -o -name 'target_scaler.ss' -o -name '*dict*.txt' \) > ../picks.txt || true
-          fi
-          cd ..
-          echo '--- picks ---'; cat picks.txt
-          while IFS= read -r f; do
-            out="stage/$(echo "$f" | sed 's|^\./||; s|/|__|g')"
-            cp "full/$f" "$out"
-          done < picks.txt
-          ls -la stage
-      - name: commit diagnostics
+          cp w/weight/dict.txt stage/dict.txt
+      - name: fetch checkpoints
         run: |
-          git config user.email "relay@bot"
-          git config user.name "relay-bot"
-          git add listing.txt picks.txt
-          git commit -m "diagnostics" || true
-          git push || true
+          set -e
+          curl -sL --retry 3 -o ck.zip "https://zenodo.org/api/records/18232165/files/checkpoints.zip/content"
+          ls -la ck.zip
+          H="checkpoints/scratch_H_pretraining_molecular_unimol_large_atom_regloss_mae_lr_0.0004_bs1_4_bs2_16_wu_0.03_ep_10_wgt_16_T__ratio_4_16_20250930_033837"
+          C="checkpoints/scratch_C_pretraining_molecular_unimol_large_atom_regloss_mae_lr_0.0004_bs1_4_bs2_16_wu_0.03_ep_10_wgt_16_T__ratio_4_16_20251004_182236"
+          unzip -o -q ck.zip "$H/cv_seed_42_fold_0/checkpoint_last.pt" "$H/target_scaler.ss" "$C/cv_seed_42_fold_0/checkpoint_last.pt" "$C/target_scaler.ss" -d full
+          mv "full/$H/cv_seed_42_fold_0/checkpoint_last.pt" stage/NMRNetpp_H_fold0_checkpoint_last.pt
+          mv "full/$H/target_scaler.ss" stage/NMRNetpp_H_target_scaler.ss
+          mv "full/$C/cv_seed_42_fold_0/checkpoint_last.pt" stage/NMRNetpp_C_fold0_checkpoint_last.pt
+          mv "full/$C/target_scaler.ss" stage/NMRNetpp_C_target_scaler.ss
+          ls -la stage
+      - name: verify sha256
+        run: |
+          cd stage
+          sha256sum * | tee ../sha256.txt
+          echo "bc12977a19ddad7057c8c4d190203cdae8130b52e54f3ddbf37d875663de04e9  NMRNetpp_H_fold0_checkpoint_last.pt" | sha256sum -c -
+          echo "888c2fdcdd0379ded4c6de7322414fcf98658f4092adf8687a54329643c0376a  NMRNetpp_C_fold0_checkpoint_last.pt" | sha256sum -c -
+          echo "dfd9201d59b0beadc11b4e9b98c4ac8e3dbf0724ccd3408e77488b62f718cc41  NMRNetpp_H_target_scaler.ss" | sha256sum -c -
+          echo "8d9af306251634c2c064e4a61ba0f71344d8569573c7d517b25b4cf42678a39b  NMRNetpp_C_target_scaler.ss" | sha256sum -c -
       - name: release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create v1 --title "NMRNet weights relay" --notes "Source: https://zenodo.org/records/13317524 (code MIT / data CC-BY-4.0)" || true
-          for f in stage/*; do
-            [ -f "$f" ] || continue
-            echo "uploading $f ($(stat -c%s "$f") bytes)"
-            gh release upload v1 "$f" --clobber || echo "FAILED: $f"
-          done
+          gh release create v2 --title "NMRNet++ fold-0 weights relay" --notes "Source: https://zenodo.org/records/18232165 (code MIT / data CC-BY-4.0). H+C fold-0 checkpoints + scalers + dict, sha256 verified." sha256.txt stage/*
